@@ -52,7 +52,7 @@ void UARTBridge::process() {
         }
     }
 
-    // 2. ALWAYS apply the cache to the gamepad (Fixes the flicker!)
+    // 2. Applies the cache to the gamepad (Fixes the flickering problem and provides a failsafe if the connection is lost)
     // If we lose connection for 500ms, it will drop the inputs to prevent a "stuck" button
     if (getMillis() - lastPacketTime < 500) {
         updateGamepad(gamepad);
@@ -94,7 +94,7 @@ void UARTBridge::updateGamepad(Gamepad* gamepad) {
 
     gamepad->hasAnalogTriggers = true;
 
-    //THE UNCHARTED FIX: DualShock 4 Digital Failsafe
+    //THE UNCHARTED 4 FIX: DualShock 4 Digital Failsafe
     // If the trigger is pulled past 10 (out of 255), slam the digital button ON
     if (lastValidPacket.lt > 10) gamepad->state.buttons |= GAMEPAD_MASK_L2;
     if (lastValidPacket.rt > 10) gamepad->state.buttons |= GAMEPAD_MASK_R2;
