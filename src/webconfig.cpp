@@ -234,7 +234,7 @@ struct DataAndStatusCode
 // **** WEB SERVER Overrides and Special Functionality ****
 int set_file_data(fs_file* file, const DataAndStatusCode& dataAndStatusCode)
 {
-    static string returnData;
+    std::string* returnData = new std::string();
 
     const char* statusCodeStr = "";
     switch (dataAndStatusCode.statusCode)
@@ -244,25 +244,27 @@ int set_file_data(fs_file* file, const DataAndStatusCode& dataAndStatusCode)
         case HttpStatusCode::_500: statusCodeStr = "500 Internal Server Error"; break;
     }
 
-    returnData.clear();
-    returnData.append("HTTP/1.0 ");
-    returnData.append(statusCodeStr);
-    returnData.append("\r\n");
-    returnData.append(
+    returnData->clear();
+    returnData->append("HTTP/1.0 ");
+    returnData->append(statusCodeStr);
+    returnData->append("\r\n");
+    returnData->append(
         "Server: GP2040-CE " GP2040VERSION "\r\n"
         "Content-Type: application/json\r\n"
         "Access-Control-Allow-Origin: *\r\n"
         "Content-Length: "
     );
-    returnData.append(std::to_string(dataAndStatusCode.data.length()));
-    returnData.append("\r\n\r\n");
-    returnData.append(dataAndStatusCode.data);
 
-    file->data = returnData.c_str();
-    file->len = returnData.size();
+    returnData->append(std::to_string(dataAndStatusCode.data.length()));
+    returnData->append("\r\n\r\n");
+    returnData->append(dataAndStatusCode.data);
+    
+    file->data = returnData->c_str();
+    file->len = returnData->size();
     file->index = file->len;
-    file->http_header_included = file->http_header_included;
-    file->pextension = NULL;
+    file->http_header_included = true;
+    file->pextension = returnData;  // store for cleanup
+    file->is_custom_file = 1;
 
     return 1;
 }
@@ -445,6 +447,7 @@ std::string setDisplayOptions(DisplayOptions& displayOptions)
     readDoc(displayOptions.inputHistoryLength, doc, "inputHistoryLength");
     readDoc(displayOptions.inputHistoryCol, doc, "inputHistoryCol");
     readDoc(displayOptions.inputHistoryRow, doc, "inputHistoryRow");
+    readDoc(displayOptions.contrast, doc, "displayContrast");
 
     readDoc(displayOptions.buttonLayoutCustomOptions.paramsLeft.layout, doc, "buttonLayoutCustomOptions", "params", "layout");
     readDoc(displayOptions.buttonLayoutCustomOptions.paramsLeft.common.startX, doc, "buttonLayoutCustomOptions", "params", "startX");
@@ -501,6 +504,7 @@ std::string getDisplayOptions() // Manually set Document Attributes for the disp
     writeDoc(doc, "inputHistoryLength", displayOptions.inputHistoryLength);
     writeDoc(doc, "inputHistoryCol", displayOptions.inputHistoryCol);
     writeDoc(doc, "inputHistoryRow", displayOptions.inputHistoryRow);
+    writeDoc(doc, "displayContrast", displayOptions.contrast);
 
     writeDoc(doc, "buttonLayoutCustomOptions", "params", "layout", displayOptions.buttonLayoutCustomOptions.paramsLeft.layout);
     writeDoc(doc, "buttonLayoutCustomOptions", "params", "startX", displayOptions.buttonLayoutCustomOptions.paramsLeft.common.startX);
@@ -558,7 +562,7 @@ std::string setProfileOptions()
     char pinName[6];
     for (JsonObject alt : alts) {
         for (Pin_t pin = 0; pin < (Pin_t)NUM_BANK0_GPIOS; pin++) {
-            snprintf(pinName, 6, "pin%0*d", 2, pin);
+            snprintf(pinName, 6, "pin%02d", (int)pin);
             // setting a pin shouldn't change a new existing addon/reserved pin
             // but if the profile definition is new, we should still capture the addon/reserved state
             if (profileOptions.gpioMappingsSets[altsIndex].pins[pin].action != GpioAction::ASSIGNED_TO_ADDON &&
@@ -755,10 +759,10 @@ std::string getGamepadOptions()
     writeDoc(doc, "miniMenuGamepadInput", gamepadOptions.miniMenuGamepadInput);
     // Write USB Vendor ID and Product ID as 4 character hex strings with 0 padding
     char usbVendorStr[5];
-    snprintf(usbVendorStr, 5, "%04X", gamepadOptions.usbVendorID);
+    snprintf(usbVendorStr, 5, "%04X", (unsigned int)gamepadOptions.usbVendorID);
     writeDoc(doc, "usbVendorID", usbVendorStr);
     char usbProductStr[5];
-    snprintf(usbProductStr, 5, "%04X", gamepadOptions.usbProductID);
+    snprintf(usbProductStr, 5, "%04X", (unsigned int)gamepadOptions.usbProductID);
     writeDoc(doc, "usbProductID", usbProductStr);
     writeDoc(doc, "fnButtonPin", -1);
     GpioMappingInfo* gpioMappings = Storage::getInstance().getGpioMappings().pins;
@@ -1118,7 +1122,7 @@ std::string setPinMappings()
 
     char pinName[6];
     for (Pin_t pin = 0; pin < (Pin_t)NUM_BANK0_GPIOS; pin++) {
-        snprintf(pinName, 6, "pin%0*d", 2, pin);
+        snprintf(pinName, 6, "pin%02d", (int)pin);
         // setting a pin shouldn't change a new existing addon/reserved pin
         if (gpioMappings.pins[pin].action != GpioAction::RESERVED &&
                 gpioMappings.pins[pin].action != GpioAction::ASSIGNED_TO_ADDON &&
@@ -1469,8 +1473,8 @@ static uint32_t calibrationSmoothingFactor = 0;
 static float ema_smoothing;
 static uint32_t smoothingRead = 0;
 
-// Get the HE Trigger Calibration using our manual GPIO input and everything
-std::string setHETriggerCalibration()
+// Get the HE Trigger Options using our manual GPIO input and everything
+std::string setHETriggerOptions()
 {
     DynamicJsonDocument doc = get_post_data();
     calibrationMuxChannels = doc["muxChannels"];
@@ -1514,7 +1518,7 @@ uint16_t emaCalculation(uint16_t value, uint16_t previous) {
 }
 
 // Get the HE Trigger Calibration using our manual GPIO input and everything
-std::string getHETriggerCalibration()
+std::string getHETriggerVoltage()
 {
     DynamicJsonDocument postDoc = get_post_data();
     uint32_t id = postDoc["targetId"];
@@ -1587,7 +1591,7 @@ std::string getHETriggerCalibration()
     return serialize_json(doc);
 }
 
-std::string getHETriggerOptions()
+std::string getHETriggerCalibrations()
 {
     const size_t capacity = JSON_OBJECT_SIZE(500);
     DynamicJsonDocument doc(capacity);
@@ -1600,15 +1604,18 @@ std::string getHETriggerOptions()
         trigger["action"] = heTriggers[i].action;
         trigger["idle"] = heTriggers[i].idle;
         trigger["active"] = heTriggers[i].active;
-        trigger["max"] = heTriggers[i].max;
-        trigger["polarity"] = heTriggers[i].polarity;
+        trigger["pressed"] = heTriggers[i].pressed;
+        trigger["is_polarized"] = heTriggers[i].is_polarized;
+        trigger["release"] = heTriggers[i].release;
+        trigger["noise"] = heTriggers[i].noise;
+        trigger["rapidTrigger"] = heTriggers[i].rapidTrigger;
     }
 
     return serialize_json(doc);
 }
 
-// Set Hall Effect Trigger Options
-std::string setHETriggerOptions()
+// Set Hall Effect Trigger Calibrations
+std::string setHETriggerCalibrations()
 {
     DynamicJsonDocument doc = get_post_data();
     HETriggerInfo * heTriggers = Storage::getInstance().getAddonOptions().heTriggerOptions.triggers;
@@ -1617,8 +1624,11 @@ std::string setHETriggerOptions()
         heTriggers[i].action = doc["triggers"][i]["action"];
         heTriggers[i].idle = doc["triggers"][i]["idle"];
         heTriggers[i].active = doc["triggers"][i]["active"];
-        heTriggers[i].max = doc["triggers"][i]["max"];
-        heTriggers[i].polarity = doc["triggers"][i]["polarity"];
+        heTriggers[i].pressed = doc["triggers"][i]["pressed"];
+        heTriggers[i].is_polarized = doc["triggers"][i]["is_polarized"];
+        heTriggers[i].release = doc["triggers"][i]["release"];
+        heTriggers[i].noise = doc["triggers"][i]["noise"];
+        heTriggers[i].rapidTrigger = doc["triggers"][i]["rapidTrigger"];
     }
     
     Storage::getInstance().getAddonOptions().heTriggerOptions.triggers_count = 32;
@@ -1666,8 +1676,6 @@ std::string setReactiveLEDs()
 std::string setAddonOptions()
 {
     DynamicJsonDocument doc = get_post_data();
-
-    GpioMappingInfo* gpioMappings = Storage::getInstance().getGpioMappings().pins;
 
     AnalogOptions& analogOptions = Storage::getInstance().getAddonOptions().analogOptions;
     docToPin(analogOptions.analogAdc1PinX, doc, "analogAdc1PinX");
@@ -1817,24 +1825,24 @@ std::string setAddonOptions()
     AnalogADS1256Options& ads1256Options = Storage::getInstance().getAddonOptions().analogADS1256Options;
     docToValue(ads1256Options.enabled, doc, "Analog1256Enabled");
     docToValue(ads1256Options.spiBlock, doc, "analog1256Block");
-    docToValue(ads1256Options.csPin, doc, "analog1256CsPin");
-    docToValue(ads1256Options.drdyPin, doc, "analog1256DrdyPin");
+    docToPin(ads1256Options.csPin, doc, "analog1256CsPin");
+    docToPin(ads1256Options.drdyPin, doc, "analog1256DrdyPin");
     docToValue(ads1256Options.avdd, doc, "analog1256AnalogMax");
     docToValue(ads1256Options.enableTriggers, doc, "analog1256EnableTriggers");
 
     RotaryOptions& rotaryOptions = Storage::getInstance().getAddonOptions().rotaryOptions;
     docToValue(rotaryOptions.enabled, doc, "RotaryAddonEnabled");
     docToValue(rotaryOptions.encoderOne.enabled, doc, "encoderOneEnabled");
-    docToValue(rotaryOptions.encoderOne.pinA, doc, "encoderOnePinA");
-    docToValue(rotaryOptions.encoderOne.pinB, doc, "encoderOnePinB");
+    docToPin(rotaryOptions.encoderOne.pinA, doc, "encoderOnePinA");
+    docToPin(rotaryOptions.encoderOne.pinB, doc, "encoderOnePinB");
     docToValue(rotaryOptions.encoderOne.mode, doc, "encoderOneMode");
     docToValue(rotaryOptions.encoderOne.pulsesPerRevolution, doc, "encoderOnePPR");
     docToValue(rotaryOptions.encoderOne.resetAfter, doc, "encoderOneResetAfter");
     docToValue(rotaryOptions.encoderOne.allowWrapAround, doc, "encoderOneAllowWrapAround");
     docToValue(rotaryOptions.encoderOne.multiplier, doc, "encoderOneMultiplier");
     docToValue(rotaryOptions.encoderTwo.enabled, doc, "encoderTwoEnabled");
-    docToValue(rotaryOptions.encoderTwo.pinA, doc, "encoderTwoPinA");
-    docToValue(rotaryOptions.encoderTwo.pinB, doc, "encoderTwoPinB");
+    docToPin(rotaryOptions.encoderTwo.pinA, doc, "encoderTwoPinA");
+    docToPin(rotaryOptions.encoderTwo.pinB, doc, "encoderTwoPinB");
     docToValue(rotaryOptions.encoderTwo.mode, doc, "encoderTwoMode");
     docToValue(rotaryOptions.encoderTwo.pulsesPerRevolution, doc, "encoderTwoPPR");
     docToValue(rotaryOptions.encoderTwo.resetAfter, doc, "encoderTwoResetAfter");
@@ -2269,8 +2277,8 @@ std::string getAddonOptions()
     AnalogADS1256Options& ads1256Options = Storage::getInstance().getAddonOptions().analogADS1256Options;
     writeDoc(doc, "Analog1256Enabled", ads1256Options.enabled);
     writeDoc(doc, "analog1256Block", ads1256Options.spiBlock);
-    writeDoc(doc, "analog1256CsPin", ads1256Options.csPin);
-    writeDoc(doc, "analog1256DrdyPin", ads1256Options.drdyPin);
+    writeDoc(doc, "analog1256CsPin", cleanPin(ads1256Options.csPin));
+    writeDoc(doc, "analog1256DrdyPin", cleanPin(ads1256Options.drdyPin));
     writeDoc(doc, "analog1256AnalogMax", ads1256Options.avdd);
     writeDoc(doc, "analog1256EnableTriggers", ads1256Options.enableTriggers);
 
@@ -2283,16 +2291,16 @@ std::string getAddonOptions()
     RotaryOptions& rotaryOptions = Storage::getInstance().getAddonOptions().rotaryOptions;
     writeDoc(doc, "RotaryAddonEnabled", rotaryOptions.enabled);
     writeDoc(doc, "encoderOneEnabled", rotaryOptions.encoderOne.enabled);
-    writeDoc(doc, "encoderOnePinA", rotaryOptions.encoderOne.pinA);
-    writeDoc(doc, "encoderOnePinB", rotaryOptions.encoderOne.pinB);
+    writeDoc(doc, "encoderOnePinA", cleanPin(rotaryOptions.encoderOne.pinA));
+    writeDoc(doc, "encoderOnePinB", cleanPin(rotaryOptions.encoderOne.pinB));
     writeDoc(doc, "encoderOneMode", rotaryOptions.encoderOne.mode);
     writeDoc(doc, "encoderOnePPR", rotaryOptions.encoderOne.pulsesPerRevolution);
     writeDoc(doc, "encoderOneResetAfter", rotaryOptions.encoderOne.resetAfter);
     writeDoc(doc, "encoderOneAllowWrapAround", rotaryOptions.encoderOne.allowWrapAround);
     writeDoc(doc, "encoderOneMultiplier", rotaryOptions.encoderOne.multiplier);
     writeDoc(doc, "encoderTwoEnabled", rotaryOptions.encoderTwo.enabled);
-    writeDoc(doc, "encoderTwoPinA", rotaryOptions.encoderTwo.pinA);
-    writeDoc(doc, "encoderTwoPinB", rotaryOptions.encoderTwo.pinB);
+    writeDoc(doc, "encoderTwoPinA", cleanPin(rotaryOptions.encoderTwo.pinA));
+    writeDoc(doc, "encoderTwoPinB", cleanPin(rotaryOptions.encoderTwo.pinB));
     writeDoc(doc, "encoderTwoMode", rotaryOptions.encoderTwo.mode);
     writeDoc(doc, "encoderTwoPPR", rotaryOptions.encoderTwo.pulsesPerRevolution);
     writeDoc(doc, "encoderTwoResetAfter", rotaryOptions.encoderTwo.resetAfter);
@@ -2683,10 +2691,10 @@ static const std::pair<const char*, HandlerFuncPtr> handlerFuncs[] =
     { "/api/getI2CPeripheralMap", getI2CPeripheralMap },
     { "/api/setExpansionPins", setExpansionPins },
     { "/api/getExpansionPins", getExpansionPins },
+    { "/api/setHETriggerCalibrations", setHETriggerCalibrations },
+    { "/api/getHETriggerCalibrations", getHETriggerCalibrations },
+    { "/api/getHETriggerVoltage", getHETriggerVoltage },
     { "/api/setHETriggerOptions", setHETriggerOptions },
-    { "/api/getHETriggerOptions", getHETriggerOptions },
-    { "/api/getHETriggerCalibration", getHETriggerCalibration },
-    { "/api/setHETriggerCalibration", setHETriggerCalibration },
     { "/api/setReactiveLEDs", setReactiveLEDs },
     { "/api/getReactiveLEDs", getReactiveLEDs },
     { "/api/setKeyMappings", setKeyMappings },
@@ -2771,7 +2779,7 @@ void fs_close_custom(struct fs_file *file)
 {
     if (file && file->is_custom_file && file->pextension)
     {
-        mem_free(file->pextension);
+        delete static_cast<std::string*>(file->pextension);
         file->pextension = NULL;
     }
 }
