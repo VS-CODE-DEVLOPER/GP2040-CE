@@ -10,6 +10,7 @@
 #include "addonmanager.h"
 #include "types.h"
 #include "usbhostmanager.h"
+#include "addons/UARTBridge.h"
 
 // Inputs for Core0
 #include "addons/analog.h"
@@ -102,7 +103,7 @@ void GP2040::setup() {
 
 	// Initialize our ADC (various add-ons)
 	adc_init();
-
+	addons.LoadAddon(new UARTBridge());
 	// Setup Add-ons
 	addons.LoadUSBAddon(new KeyboardHostAddon());
 	addons.LoadUSBAddon(new GamepadUSBHostAddon());
